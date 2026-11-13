@@ -1,0 +1,17 @@
+{
+  "name": "system-design-coach",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local mock system design interview coach that runs on your own Claude Code login.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/",
+    "mac": "sh mac/build.sh",
+    "calibrate": "node calibrate.mjs"
+  }
+}
