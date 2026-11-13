@@ -7,3 +7,7 @@ build/
 dist/
 out/
 *.app
+*.pem
+*.key
+*.p12
+.claude/settings.local.json

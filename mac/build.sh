@@ -14,7 +14,11 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/coach"
 
 swiftc -O -swift-version 5 -o "$app/Contents/MacOS/SystemDesignCoach" "$here/main.swift" "$here/Dictation.swift"
 cp "$here/Info.plist" "$app/Contents/Info.plist"
-cp -R "$coach/server.mjs" "$coach/lib" "$coach/public" "$app/Contents/Resources/coach/"
+res="$app/Contents/Resources/coach"
+mkdir "$res/lib" "$res/public"
+cp "$coach/server.mjs" "$res/"
+cp "$coach"/lib/*.mjs "$res/lib/"
+for f in index.html app.js app.css dictation.mjs; do cp "$coach/public/$f" "$res/public/"; done
 
 swiftc -O -o "$work/icon" "$here/icon.swift"
 "$work/icon" "$work/icon.png"
@@ -25,7 +29,7 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns -o "$app/Contents/Resources/AppIcon.icns" "$work/AppIcon.iconset"
 
-codesign --force --sign - "$app"
+codesign --force --options runtime --entitlements "$here/entitlements.plist" --sign - "$app"
 mkdir -p "$dest"
 rm -rf "$dest/System Design Coach.app"
 mv "$app" "$dest/"

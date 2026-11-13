@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
   func applicationDidFinishLaunching(_ note: Notification) {
     NSApp.mainMenu = mainMenu()
     let config = WKWebViewConfiguration()
+    config.websiteDataStore = .nonPersistent() // no cookies or storage survive a run; the server keeps the target role
     config.userContentController.add(self, name: "sdc")
     web = WKWebView(frame: .zero, configuration: config)
     web.navigationDelegate = self
@@ -109,24 +110,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       let path = loginShellPath()
       DispatchQueue.main.async {
         self.path = path
-        self.startServer(port: 4319)
+        self.startServer()
       }
     }
   }
 
-  /// Port 4319 keeps the page's origin the same at each launch, so the page keeps its saved target role.
-  /// If a server started in a terminal holds that port, the app takes any free port.
-  func startServer(port: Int) {
+  /// The server takes a free port (SDC_PORT 0), so another local user cannot hold a known port.
+  /// The page keeps its target role on the server, so a new port at each start loses nothing.
+  func startServer() {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     p.arguments = ["node", coach.appendingPathComponent("server.mjs").path]
-    var env = ProcessInfo.processInfo.environment
-    env["NODE_OPTIONS"] = nil // a value that Finder or a login item set must not change what node runs
-    env["NODE_PATH"] = nil
+    // Allowlist: node gets only what it needs, so a value that Finder or a login item set (NODE_OPTIONS, DYLD_*) cannot reach it.
+    let source = ProcessInfo.processInfo.environment
+    var env = source.filter { ["HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "SHELL"].contains($0.key) || $0.key.hasPrefix("SDC_") }
     output = ""
     logPending = ""
     env["PATH"] = path
-    env["SDC_PORT"] = String(port)
+    if env["SDC_PORT"] == nil { env["SDC_PORT"] = "0" }
     env["SDC_STOP_WITH_STDIN"] = "1"
     p.environment = env
     p.standardInput = Pipe()
@@ -142,14 +143,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       DispatchQueue.main.async { self.serverPrinted(data) }
     }
     p.terminationHandler = { proc in
-      DispatchQueue.main.async { self.serverStopped(status: proc.terminationStatus, port: port) }
+      DispatchQueue.main.async { self.serverStopped(status: proc.terminationStatus) }
     }
     do {
       try p.run()
       server = p
     } catch {
       output = error.localizedDescription
-      serverStopped(status: 1, port: 0)
+      serverStopped(status: 1)
     }
   }
 
@@ -158,7 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // The log gets whole lines, with the token hidden. A token that a read split in two is still hidden.
     logPending += text
     if let nl = logPending.lastIndex(of: "\n") {
-      log?.write(Data(redactToken(String(logPending[...nl])).utf8))
+      try? log?.write(contentsOf: Data(redactToken(String(logPending[...nl])).utf8))
       logPending = String(logPending[logPending.index(after: nl)...])
     }
     output = String((output + text).suffix(4000))
@@ -175,7 +176,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     if origin?.allows(url) == true {
       decisionHandler(.allow)
     } else {
-      openExternally(url)
+      // A subframe must never reach the browser: only a main-frame link opens there.
+      if action.targetFrame?.isMainFrame == true { openExternally(url) }
       decisionHandler(.cancel)
     }
   }
@@ -198,22 +200,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     decisionHandler(.deny)
   }
 
-  func serverStopped(status: Int32, port: Int) {
+  func serverStopped(status: Int32) {
     if quitting { return }
-    if !logPending.isEmpty { log?.write(Data(redactToken(logPending).utf8)); logPending = "" }
-    if !loaded && port != 0 && status != 127 { return startServer(port: 0) } // port 4319 is taken
+    if !logPending.isEmpty { try? log?.write(contentsOf: Data(redactToken(logPending).utf8)); logPending = "" }
     loaded = false
     origin = nil
+    // The old page must not keep sending requests, so it goes blank before the alert.
+    dictation.cancel()
+    web.loadHTMLString("", baseURL: nil)
     let noNode = status == 127 // /usr/bin/env did not find node
     let alert = NSAlert()
     alert.messageText = noNode ? "Node is not installed" : "The coach server stopped"
     alert.informativeText = noNode
       ? "The coach needs Node 26 or later. Install it, for example with \"brew install node\". Then open the app again."
-      : "\(redactToken(String(output.suffix(600))))\n\nThe full log is in ~/Library/Logs/System Design Coach.log."
+      : "\(String(redactToken(output).suffix(600)))\n\nThe full log is in ~/Library/Logs/System Design Coach.log."
     alert.addButton(withTitle: noNode ? "Quit" : "Restart")
     if !noNode { alert.addButton(withTitle: "Quit") }
     if alert.runModal() == .alertFirstButtonReturn && !noNode {
-      startServer(port: 4319)
+      startServer()
     } else {
       NSApp.terminate(nil)
     }
@@ -260,9 +264,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sdc-\(UUID().uuidString)")
     let script = folder.appendingPathComponent("Sign in to Claude.command")
+    let quoted = "'" + folder.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     do {
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-      try "#!/bin/zsh -l\nrm -rf -- \"${0:h}\"\nclaude auth login \(kind)\n".write(to: script, atomically: true, encoding: .utf8)
+      try "#!/bin/zsh -l\nrm -rf -- \(quoted)\nclaude auth login \(kind)\n".write(to: script, atomically: true, encoding: .utf8)
       try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
     } catch {
       return

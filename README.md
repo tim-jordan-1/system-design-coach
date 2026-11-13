@@ -26,9 +26,9 @@ The browser version runs on macOS. The tests run on Linux in CI. Windows is unte
 2. Install Claude Code. On macOS and Linux, run `curl -fsSL https://claude.ai/install.sh | bash`. You can also run `brew install --cask claude-code` or `npm install -g @anthropic-ai/claude-code`. On Windows, the PowerShell command is `irm https://claude.ai/install.ps1 | iex`. The [setup guide](https://code.claude.com/docs/en/setup) has the details.
 3. Sign in. See [Authentication](#authentication).
 4. Start the server with `node server.mjs` or `npm start`.
-5. Open the link that the server prints. It looks like this: `System Design Coach on http://127.0.0.1:4319/?token=<key>`.
+5. Open the link that the server prints. It looks like this: `System Design Coach on http://127.0.0.1:<port>/?token=<key>`.
 
-Open that exact link in your browser. The page needs the key. Each time the server starts, it makes a new key, so open the new link after a restart.
+Open that exact link in your browser. The page needs the key. Each time the server starts, it picks a new free port and makes a new key, so open the new link after a restart. The page locks itself when the server stops, and after a network error. Open the new link to unlock it.
 
 To use the Mac app instead, build it and open it:
 
@@ -36,7 +36,7 @@ To use the Mac app instead, build it and open it:
 sh mac/build.sh
 ```
 
-The script puts `System Design Coach.app` in `~/Applications`. Open it from Spotlight, Launchpad or that folder. The app starts the server and opens the link for you. It runs its own copy of the code, so run `build.sh` again after you change the code. The app and a server in a terminal use the same interview files.
+The script puts `System Design Coach.app` in `~/Applications`. Open it from Spotlight, Launchpad or that folder. The app starts the server and opens the link for you. It signs the app ad hoc with the hardened runtime, which stops other programs from injecting libraries into the app. The app keeps no browser data between runs. It runs its own copy of the code, so run `build.sh` again after you change the code. The app and a server in a terminal use the same interview files.
 
 When you quit the app, its server stops. If you quit while Claude grades an interview, the grade stops too. Open the interview and select Grade it again. The server log is in `~/Library/Logs/System Design Coach.log`.
 
@@ -65,7 +65,7 @@ Anthropic's pages above were current on 2026-11-14.
 
 ## Run an interview
 
-1. Select your target role in the left rail, or select a gauge on the Overview page.
+1. Select your target role in the left rail, or select a gauge on the Overview page. The server saves the role in `~/.system-design-coach/profile.json`, not in the browser.
 2. Open Interview. Select a question, the role to interview for, and a length of 5, 8 or 12 probes.
 3. Type your answers in the chat box. To send, press Cmd+Enter on a Mac or Ctrl+Enter on other systems.
 4. Keep your requirements, estimates and schema in Design notes. Claude reads the notes with every answer, and the grader reads them too.
@@ -74,7 +74,7 @@ Anthropic's pages above were current on 2026-11-14.
 
 ## Set your background
 
-On the Start interview page, you can fill in "Your background". This is optional. It tells the interviewer and the grader what you already know, so the questions and the grade fit your level. The coach saves the text in `~/.system-design-coach/profile.json` and adds it to the interviewer prompt and the grader prompt. The code contains no background for any person.
+On the Start interview page, you can fill in "Your background". This is optional. It tells the interviewer and the grader what you already know, so the questions and the grade fit your level. The coach saves the text in `~/.system-design-coach/profile.json`, together with your target role. It adds the text to the interviewer prompt and the grader prompt. The code contains no background for any person.
 
 ## Dictate an answer
 
@@ -111,7 +111,7 @@ The grader is Claude with the `opus` model at high effort. After the grader answ
 
 The interviewer is Claude with the `sonnet` model at low effort. It gets a budget of probes and a list of the dimensions that it did not test yet. It does not give hints unless you ask for one.
 
-Each call to Claude runs in isolation. It has no tools, no MCP servers, no user settings, no hooks, no CLAUDE.md files, and no saved session history. Because the calls have no tools, text in your answers or notes cannot make Claude run anything.
+Each call to Claude runs in isolation, in a private folder under `~/.system-design-coach`. It has no tools, no MCP servers, no user settings, no hooks, no CLAUDE.md files, and no saved session history. The server refuses a call if `claude` starts with tools or MCP servers. The server also neutralizes each @-mention in your text, so a prompt cannot pull in a file. Because the calls have no tools, text in your answers or notes cannot make Claude run anything.
 
 ## Configuration
 
@@ -119,7 +119,7 @@ The server reads these environment variables. Each one has a default.
 
 | Variable | Default | What it sets |
 |---|---|---|
-| `SDC_PORT` | `4319` | The port. Use `0` for a free port. |
+| `SDC_PORT` | `0` | The port. `0` picks a free port at each start. |
 | `SDC_HOME` | `~/.system-design-coach` | The folder for interview files. |
 | `SDC_CLAUDE` | `claude` | The `claude` program. Tests set it to a fake. |
 | `SDC_INTERVIEWER_MODEL` | `sonnet` | The interviewer model. |
@@ -134,7 +134,7 @@ The server reads these environment variables. Each one has a default.
 - The page loads its two fonts from Google Fonts. Each time that the page loads, Google sees your IP address.
 - Audio never leaves the Mac. The app does not save it.
 
-The server answers only requests whose Host is `127.0.0.1` or `localhost` on its port. Every `/api` call needs the key from the link. The Mac app's web view shows only the local coach page, and it opens other links in your default browser. See [SECURITY.md](SECURITY.md) for the threat model.
+The server accepts only `127.0.0.1` as Host and Origin, on its port. Each response carries `Cross-Origin-Opener-Policy: same-origin`. Every `/api` call needs the key from the link. The Mac app's web view shows only the local coach page, and it opens other links in your default browser. See [SECURITY.md](SECURITY.md) for the threat model.
 
 ## Change the rubric, the roles or the questions
 

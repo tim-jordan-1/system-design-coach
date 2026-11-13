@@ -50,6 +50,12 @@ test('the code caps what the grader cannot prove', () => {
   assert.deepEqual(g.gaps.map((x) => x.dimension), ['reliability'], 'unknown dimensions are dropped');
 });
 
+test('a quote of text that the prompt neutralized still matches, and shows without the zero-width space', () => {
+  const g = strictGrade({ dimensions: { api_data: { score: 3, evidence: ['the client sends @\u200Bmention tokens to the API'] } } }, 'Then the client sends @mention tokens to the API.');
+  assert.deepEqual(g.dims.api_data.evidence, [{ quote: 'the client sends @mention tokens to the API', verified: true }]);
+  assert.equal(g.dims.api_data.score, 3);
+});
+
 test('verdicts follow the bars, strictly', () => {
   const g5 = ROLE['google-l5'];
   assert.equal(verdict(all(3), g5), 'Hire');

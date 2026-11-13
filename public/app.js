@@ -70,7 +70,8 @@ const PHASES = [['Scope and estimates', 0.15], ['APIs and data model', 0.3], ['H
 
 const S = {
   /** @type {any} */ data: null,
-  target: (() => { try { return localStorage.getItem('sdc.target') || 'google-l5'; } catch { return 'google-l5'; } })(),
+  /** The target role. The first state from the server sets it from the profile. */
+  target: '',
   view: 'overview', arg: '', /** @type {Record<string, string>} */ query: {},
   /** @type {any} */ live: null, /** @type {any} */ report: null,
   busy: false, locked: false, pending: '', error: '', flash: '', /** @type {string | null} */ confirm: null,
@@ -78,23 +79,32 @@ const S = {
   animated: false, /** @type {number | undefined} */ clock: undefined, /** @type {number | undefined} */ poll: undefined, /** @type {number | undefined} */ notesTimer: undefined,
 };
 
-/** Without a valid token nothing works, so the whole page says how to get a fresh link. @returns {Error} */
+/**
+ * Without a valid token or a running server nothing works, so the whole page says how to get a fresh link.
+ * It stays locked: after that, no request goes out. @returns {Error}
+ */
 function locked() {
   if (!S.locked) {
     S.locked = true;
     clearInterval(S.clock);
     clearTimeout(S.poll);
-    document.body.innerHTML = `<main class="main locked"><section class="panel"><div class="empty" role="alert"><strong>Open the coach from the link that its server printed.</strong>
-      <span>When the coach server starts, it prints a link in the terminal, like <code>System Design Coach on http://127.0.0.1:4319/?token=…</code>. Open that link. The Mac app opens it for you.</span>
-      <span>Each server start makes a new link, so an older link, tab or bookmark stops working.</span></div></section></main>`;
+    document.body.innerHTML = `<main class="main locked"><section class="panel"><div class="empty" role="alert"><strong>The coach server stopped. Open the new link that it printed.</strong>
+      <span>Each time the server starts, it prints a new link in the terminal, like <code>System Design Coach on http://127.0.0.1:…/?token=…</code>. If the server is not running, start it, then open that link. The Mac app opens it for you.</span>
+      <span>A link works only while the server that printed it runs, so an older link, tab or bookmark stops working.</span></div></section></main>`;
   }
   return new Error('The coach needs the link that its server printed.');
 }
 
+/** A request that cannot reach the server locks the page. An abort is the user's Stop, not a network error. */
+const net = (/** @type {Promise<any>} */ p) => p.catch((e) => {
+  throw e?.name === 'AbortError' ? e : locked();
+});
+
 async function api(/** @type {string} */ path, /** @type {unknown} */ body) {
-  const res = await fetch(path, body === undefined ? { headers: { 'X-SDC-Token': TOKEN } } : {
+  if (S.locked) throw locked();
+  const res = await net(fetch(path, body === undefined ? { headers: { 'X-SDC-Token': TOKEN } } : {
     method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json', 'X-SDC-Token': TOKEN },
-  });
+  }));
   if (res.status === 401) throw locked();
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
@@ -103,29 +113,62 @@ async function api(/** @type {string} */ path, /** @type {unknown} */ body) {
 
 /** POSTs and reads the server-sent events of the response. */
 async function stream(/** @type {string} */ path, /** @type {unknown} */ body, /** @type {(e: string, d: any) => void} */ on, /** @type {AbortSignal} */ signal) {
-  const res = await fetch(path, { method: 'POST', body: JSON.stringify(body), signal, headers: { 'Content-Type': 'application/json', 'X-SDC-Token': TOKEN } });
+  if (S.locked) throw locked();
+  const res = await net(fetch(path, { method: 'POST', body: JSON.stringify(body), signal, headers: { 'Content-Type': 'application/json', 'X-SDC-Token': TOKEN } }));
   if (res.status === 401) throw locked();
   if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error || `${res.status} ${res.statusText}`);
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
   for (;;) {
-    const { value, done } = await reader.read();
+    const { value, done } = await net(reader.read());
     if (done) break;
     buf += dec.decode(value, { stream: true });
     for (let i = buf.indexOf('\n\n'); i >= 0; i = buf.indexOf('\n\n')) {
-      const frame = buf.slice(0, i);
+      // Split on \n only. A regex with the m flag also breaks lines at U+2028 and U+2029.
+      const lines = buf.slice(0, i).split('\n');
       buf = buf.slice(i + 2);
-      const ev = /^event: (.+)$/m.exec(frame)?.[1];
-      const data = /^data: (.+)$/m.exec(frame)?.[1];
+      const field = (/** @type {string} */ name) => lines.find((l) => l.startsWith(`${name}: `))?.slice(name.length + 2);
+      const ev = field('event');
+      const data = field('data');
       if (ev && data) on(ev, JSON.parse(data));
     }
   }
 }
 
+/** The server holds this stream open while it runs. When it ends or fails, the server stopped, so the page locks for good. */
+async function watchServer() {
+  try {
+    const res = await fetch('/api/live', { headers: { 'X-SDC-Token': TOKEN } });
+    const reader = /** @type {ReadableStream<Uint8Array>} */ (res.body).getReader();
+    while (!(await reader.read()).done); // each read is a heartbeat
+  } catch {}
+  locked();
+}
+
 async function refresh() {
   S.data = await api('/api/state');
+  // Once, from the profile. After that, the rail select changes it.
+  S.target ||= S.data.profile.target || 'google-l5';
   if (!S.data.roles.some((/** @type {any} */ r) => r.id === S.target)) S.target = S.data.roles[0].id;
+}
+
+/** The target role lives in the profile, because the page origin changes with the port at each server start. */
+function setTarget(/** @type {string} */ id) {
+  S.target = id;
+  $('#target').value = id;
+  api('/api/profile', { target: id }).catch((e) => {
+    S.flash = `Could not save the target role: ${e.message}`;
+    render();
+  });
+  render();
+}
+
+/** An answer draft lives in this tab until its interview ends, is discarded or is deleted. */
+function dropDraft(/** @type {string} */ id) {
+  try {
+    sessionStorage.removeItem(`sdc.draft.${id}`);
+  } catch {}
 }
 
 const role = (/** @type {string} */ id) => S.data.roles.find((/** @type {any} */ r) => r.id === id);
@@ -295,7 +338,7 @@ function viewSetup() {
 
 function roomSkeleton(/** @type {any} */ s) {
   const q = s.question;
-  const r = role(s.roleId);
+  const r = role(s.roleId) ?? role(S.target); // a role that the bank no longer has
   return `<div class="room" id="room" data-id="${esc(s.id)}">
   <section class="panel chat" aria-labelledby="h-room"><div class="chat-head"><div class="meta"><h1 id="h-room">Design ${esc(q.title)}</h1><p class="small muted">${esc(roleName(r))} · ${esc(catName(q.category))}</p></div><span class="chip num" id="probe-chip"></span></div>
     <div class="log" id="log" aria-live="polite" aria-relevant="additions"></div>
@@ -371,7 +414,7 @@ function viewReport() {
   const s = S.report;
   if (!s) return '<p class="muted">Loading…</p>';
   const q = s.question;
-  const r = role(s.roleId);
+  const r = role(s.roleId) ?? role(S.target); // a role that the bank no longer has
   const head = `<div class="page-head"><div class="meta"><h1>Design ${esc(q.title)}</h1><p class="small muted">${esc(day(s.createdAt))} · ${esc(roleName(r))} · <span class="num">${s.summary.minutes}</span> min · <span class="num">${s.summary.probesUsed}/${s.probes}</span> probes</p></div><a class="btn" href="#history">All history</a></div>`;
   const del = S.confirm === `delete-${s.id}`
     ? `<div class="confirm" role="group" aria-label="Confirm delete"><span>Delete this interview? It moves to the trash folder and your scores are recalculated without it.</span><button type="button" class="btn danger" data-act="delete-yes" data-id="${esc(s.id)}">Delete</button><button type="button" class="btn" data-act="confirm-no">Keep it</button></div>`
@@ -511,7 +554,7 @@ async function render() {
     return;
   }
   const views = /** @type {Record<string, () => string>} */ ({ overview: viewOverview, history: viewHistory, questions: viewQuestions, rubric: viewRubric });
-  app.innerHTML = (views[S.view] ?? viewOverview)();
+  app.innerHTML = (Object.hasOwn(views, S.view) ? views[S.view] : viewOverview)();
 }
 
 async function pollReport() {
@@ -562,9 +605,7 @@ async function send(retry = false) {
   if (!retry) {
     s.transcript.push({ role: 'candidate', text, at: secondsSince(s.startedAt) });
     box.value = '';
-    try {
-      sessionStorage.removeItem(`sdc.draft.${s.id}`);
-    } catch {}
+    dropDraft(s.id);
     Object.assign(D, { state: 'off', review: false });
     paintDictation();
   }
@@ -588,6 +629,7 @@ async function send(retry = false) {
   }
   Object.assign(S, { busy: false, pending: '', ctl: null });
   if (s.status === 'grading') {
+    dropDraft(s.id);
     await refresh();
     location.hash = `#session/${s.id}`;
     return;
@@ -601,6 +643,7 @@ async function end() {
   if (!s) return;
   try {
     await api(`/api/sessions/${s.id}/end`, {});
+    dropDraft(s.id);
     await refresh();
     S.report = null;
     location.hash = `#session/${s.id}`;
@@ -789,14 +832,8 @@ document.addEventListener('click', async (e) => {
   const el = /** @type {HTMLElement | null} */ (t.closest('[data-act]'));
   if (!el) return;
   const { act, id = '' } = el.dataset;
-  if (act === 'target') {
-    S.target = id;
-    try {
-      localStorage.setItem('sdc.target', id);
-    } catch {}
-    $('#target').value = id;
-    render();
-  } else if (act === 'start') start(id, el.dataset.role || S.target, 8);
+  if (act === 'target') setTarget(id);
+  else if (act === 'start') start(id, el.dataset.role || S.target, 8);
   else if (act === 'stop') S.ctl?.abort();
   else if (act === 'retry') send(true);
   else if (act === 'login' || act === 'login-console') void signIn(act);
@@ -812,6 +849,7 @@ document.addEventListener('click', async (e) => {
   } else if (act === 'discard-yes') {
     try {
       await api(`/api/sessions/${S.live.id}/delete`, {});
+      dropDraft(S.live.id);
       S.live = null;
       await refresh();
       location.hash = '#overview';
@@ -836,6 +874,7 @@ document.addEventListener('click', async (e) => {
   } else if (act === 'delete-yes') {
     try {
       await api(`/api/sessions/${id}/delete`, {});
+      dropDraft(id);
       S.report = null;
       await refresh();
       location.hash = '#history';
@@ -888,19 +927,14 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   const t = /** @type {HTMLSelectElement} */ (e.target);
   if (t.id === 'f-q') $('#f-brief').textContent = question(t.value)?.brief ?? '';
-  if (t.id === 'target') {
-    S.target = t.value;
-    try {
-      localStorage.setItem('sdc.target', t.value);
-    } catch {}
-    render();
-  }
+  if (t.id === 'target') setTarget(t.value);
 });
 
 window.addEventListener('hashchange', route);
 
 (async () => {
   if (!TOKEN) return void locked();
+  void watchServer();
   try {
     await refresh();
   } catch (e) {

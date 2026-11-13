@@ -12,13 +12,12 @@ import {
 import { CATEGORIES, QUESTION, QUESTIONS } from './lib/questions.mjs';
 import { DIMENSIONS, ROLE, ROLES, RULES, SCALE } from './lib/rubric.mjs';
 import { proficiency, readiness, recommend, scoresOf, strictGrade, verdict, weighted } from './lib/scoring.mjs';
-import { BACKGROUND_LIMIT, createStore } from './lib/store.mjs';
+import { BACKGROUND_LIMIT, ID_RE, createStore } from './lib/store.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BODY_LIMIT = 256 * 1024;
 const TEXT_LIMIT = 20_000;
 const NOTES_LIMIT = 40_000;
-const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const STATIC = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
@@ -30,12 +29,14 @@ const HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
+  'Cross-Origin-Opener-Policy': 'same-origin',
   'Cache-Control': 'no-store',
 };
 
 const env = process.env;
 const config = {
-  port: Number(env.SDC_PORT ?? 4319),
+  // 0 is a free port at each start, so a page or link from an earlier start never reaches this one.
+  port: Number(env.SDC_PORT ?? 0),
   home: env.SDC_HOME || join(homedir(), '.system-design-coach'),
 };
 
@@ -81,6 +82,8 @@ const secondsSince = (/** @type {string} */ t) => Math.max(0, Math.round((Date.n
 const candidateTurns = (/** @type {any} */ s) => s.transcript.filter((/** @type {any} */ m) => m.role === 'candidate').length;
 /** A graded interview counts toward proficiency only with three or more answers; a false start does not. */
 const counted = (/** @type {any} */ s) => s.status === 'graded' && candidateTurns(s) >= 3;
+/** A saved session may name a question that the bank no longer has. Then its id stands in for the title. */
+const questionOf = (/** @type {string} */ id) => (Object.hasOwn(QUESTION, id) ? QUESTION[id] : { id, title: id, brief: '', crux: '' });
 
 async function main() {
   const store = await createStore(config.home);
@@ -93,7 +96,7 @@ async function main() {
 
   /** @param {any} s */
   function summary(s) {
-    const q = QUESTION[s.questionId];
+    const q = questionOf(s.questionId);
     const out = {
       id: s.id, questionId: s.questionId, title: q.title, category: q.category, roleId: s.roleId, probes: s.probes,
       status: s.status, createdAt: s.createdAt, endedAt: s.endedAt,
@@ -119,7 +122,7 @@ async function main() {
     return {
       scale: SCALE, dimensions: DIMENSIONS, rules: RULES, roles: ROLES, categories: CATEGORIES,
       questions: QUESTIONS.map(({ crux, ...q }) => ({ ...q, attempts: attempts[q.id] ?? 0 })),
-      probeOptions: PROBE_OPTIONS, models: MODELS, profile: { background: store.background() },
+      probeOptions: PROBE_OPTIONS, models: MODELS, profile: { background: store.background(), target: store.target() },
       sessions: all.map(summary),
       proficiency: prof,
       readiness: Object.fromEntries(ROLES.map((r) => [r.id, readiness(prof, r)])),
@@ -132,7 +135,7 @@ async function main() {
 
   /** The full session. The interviewer's hidden notes show only once it is graded. @param {any} s */
   function detail(s) {
-    const { crux, ...q } = QUESTION[s.questionId];
+    const { crux, ...q } = questionOf(s.questionId);
     return { ...s, question: s.status === 'graded' ? { ...q, crux } : q, summary: summary(s) };
   }
 
@@ -144,14 +147,18 @@ async function main() {
 
   /** @type {Set<string>} */
   const grading = new Set();
-  /** Grades in the background. The browser polls the session until the status changes. @param {any} s */
+  /**
+   * Grades in the background. The browser polls the session until the status changes.
+   * It never rejects, because its callers do not wait: a failed write leaves the session grade_failed in memory.
+   * @param {any} s
+   */
   async function grade(s) {
     if (grading.has(s.id)) return;
     grading.add(s.id);
-    s.status = 'grading';
-    s.gradeError = null;
-    await store.put(s);
     try {
+      s.status = 'grading';
+      s.gradeError = null;
+      await store.put(s);
       const role = ROLE[s.roleId];
       const question = QUESTION[s.questionId];
       const minutes = Math.round((Date.parse(s.endedAt) - Date.parse(s.startedAt)) / 60000);
@@ -169,7 +176,14 @@ async function main() {
     } finally {
       grading.delete(s.id);
     }
-    await store.put(s);
+    try {
+      await store.put(s);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      s.status = 'grade_failed';
+      s.gradeError = `The grade could not be saved: ${msg}`;
+      console.error(`could not save the grade of ${s.id}: ${msg}`);
+    }
   }
 
   /** One interviewer reply, streamed as server-sent events over the POST response. */
@@ -189,8 +203,9 @@ async function main() {
       if (!res.writableEnded) ctl.abort();
     });
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+    // JSON.stringify leaves U+2028 and U+2029 raw. Some line parsers break lines there, so they go out escaped.
     const send = (/** @type {string} */ event, /** @type {unknown} */ data) => {
-      if (!res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      if (!res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data).replace(/[\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16)}`)}\n\n`);
     };
     try {
       await store.put(s);
@@ -225,12 +240,13 @@ async function main() {
   }
 
   let port = config.port;
-  const origins = () => [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+  /** The server listens only on 127.0.0.1, so that is the only host and origin it answers. */
+  const host = () => `127.0.0.1:${port}`;
 
   /** @returns {string | null} why the POST is refused */
   function postGuard(/** @type {import('node:http').IncomingMessage} */ req) {
     if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) return 'Content-Type must be application/json';
-    if (!origins().includes(String(req.headers.origin))) return 'Origin is not allowed';
+    if (req.headers.origin !== `http://${host()}`) return 'Origin is not allowed';
     if (!['same-origin', 'none'].includes(String(req.headers['sec-fetch-site']))) return 'Sec-Fetch-Site must be same-origin';
     return null;
   }
@@ -244,8 +260,12 @@ async function main() {
 
   /** @param {import('node:http').IncomingMessage} req @param {import('node:http').ServerResponse} res */
   async function route(req, res) {
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    const path = url.pathname;
+    let path;
+    try {
+      path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    } catch {
+      throw new HttpError(400, 'the request target is not a valid URL');
+    }
     const method = req.method;
     if (method !== 'GET' && method !== 'POST') throw new HttpError(405, 'method not allowed');
     const asset = method === 'GET' ? STATIC.get(path) : undefined;
@@ -263,6 +283,21 @@ async function main() {
     }
     if (method === 'GET' && path === '/api/state') return json(res, 200, state());
     if (method === 'GET' && path === '/api/auth') return json(res, 200, await authStatus());
+    // The page holds this stream open. When it ends, the server stopped, and the page locks until the new link is opened.
+    if (method === 'GET' && path === '/api/live') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+      res.write(': live\n\n');
+      const beat = setInterval(() => res.write(': live\n\n'), 20_000);
+      res.on('close', () => clearInterval(beat));
+      return;
+    }
+    if (method === 'POST' && path === '/api/profile') {
+      const { target } = await readBody(req);
+      // An own property, so that "constructor" or "__proto__" does not pass.
+      if (typeof target !== 'string' || !Object.hasOwn(ROLE, target)) throw new HttpError(404, 'no such role');
+      await store.setTarget(target);
+      return json(res, 200, { ok: true });
+    }
     if (method === 'POST' && path === '/api/sessions') {
       const b = await readBody(req);
       // find, not QUESTION[id]: an id such as "constructor" or "__proto__" must not pass.
@@ -286,16 +321,22 @@ async function main() {
     if (m) {
       const s = session(m[1]);
       const sub = m[2];
+      /** The body, once the session is still there: a delete may land while the body arrives, and a late write must never undo it. */
+      const body = async () => {
+        const b = await readBody(req);
+        if (store.get(s.id) !== s) throw new HttpError(404, 'no such interview');
+        return b;
+      };
       if (method === 'GET' && !sub) return json(res, 200, detail(s));
-      if (method === 'POST' && sub === 'turn') return turn(res, s, await readBody(req));
+      if (method === 'POST' && sub === 'turn') return turn(res, s, await body());
       if (method === 'POST' && sub === 'notes') {
-        const notes = optText((await readBody(req)).notes, 'notes', NOTES_LIMIT);
+        const notes = optText((await body()).notes, 'notes', NOTES_LIMIT);
         if (s.status !== 'live') throw new HttpError(409, 'this interview is over');
         if (notes !== undefined) await store.put(Object.assign(s, { notes }));
         return json(res, 200, { ok: true });
       }
       if (method === 'POST' && sub === 'end') {
-        await readBody(req);
+        await body();
         if (s.status !== 'live') throw new HttpError(409, 'this interview is over');
         if (busy.has(s.id)) throw new HttpError(409, 'the interviewer is still answering');
         s.endedAt = iso();
@@ -303,13 +344,13 @@ async function main() {
         return json(res, 202, detail(s));
       }
       if (method === 'POST' && sub === 'grade') {
-        await readBody(req);
+        await body();
         if (s.status !== 'grade_failed') throw new HttpError(409, 'only a failed grade can be retried');
         void grade(s);
         return json(res, 202, detail(s));
       }
       if (method === 'POST' && sub === 'delete') {
-        await readBody(req);
+        await body();
         if (busy.has(s.id) || grading.has(s.id)) throw new HttpError(409, 'wait until Claude finishes');
         await store.remove(s.id);
         return json(res, 200, { ok: true });
@@ -320,17 +361,20 @@ async function main() {
 
   const server = createServer(async (req, res) => {
     for (const [k, v] of Object.entries(HEADERS)) res.setHeader(k, v);
-    if (!origins().map((o) => o.slice('http://'.length)).includes(String(req.headers.host))) {
-      return json(res, 403, { error: 'Host must be 127.0.0.1 or localhost on this port' });
-    }
+    if (req.headers.host !== host()) return json(res, 403, { error: 'Host must be 127.0.0.1 on this port' });
     try {
       await route(req, res);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
-      if (status === 500) console.error(e);
+      // The message only: a stack or an error object can carry what the request sent.
+      if (status === 500) console.error(e instanceof Error ? e.message : String(e));
       if (!res.headersSent) json(res, status, { error: e instanceof Error ? e.message : String(e) });
       else res.end();
     }
+  });
+  server.on('error', (e) => {
+    console.error(e.message);
+    process.exit(1);
   });
   await new Promise((resolve) => server.listen(config.port, '127.0.0.1', () => resolve(null)));
   port = /** @type {import('node:net').AddressInfo} */ (server.address()).port;
