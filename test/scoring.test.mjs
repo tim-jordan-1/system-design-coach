@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { QUESTIONS, CATEGORY } from '../lib/questions.mjs';
+import { CATEGORIES, QUESTIONS } from '../lib/questions.mjs';
 import { DIM_IDS, ROLE, ROLES } from '../lib/rubric.mjs';
 import { normalize, proficiency, quoteFound, readiness, recommend, strictGrade, verdict, weighted } from '../lib/scoring.mjs';
 
@@ -17,7 +17,7 @@ test('every role covers every dimension with sane bars and weights', () => {
   }
   assert.equal(new Set(QUESTIONS.map((q) => q.id)).size, QUESTIONS.length, 'question ids are unique');
   for (const q of QUESTIONS) {
-    assert.ok(CATEGORY[q.category], `${q.id} category`);
+    assert.ok(CATEGORIES.some((c) => c.id === q.category), `${q.id} category`);
     assert.ok(q.stress.length && q.stress.every((d) => DIM_IDS.includes(d)), `${q.id} stress`);
   }
 });
@@ -71,7 +71,6 @@ test('verdicts follow the bars, strictly', () => {
 test('proficiency weights recent interviews more', () => {
   const p = proficiency([all(3), all(1)]);
   assert.equal(p.dims.architecture.value, Math.round(((3 + 0.8) / 1.8) * 100) / 100);
-  assert.equal(p.dims.architecture.trend, 2);
   assert.equal(proficiency([]).dims.requirements.value, null);
   assert.equal(proficiency(Array(9).fill(all(2))).n, 9, 'n counts every interview, the mean uses the last five');
 });

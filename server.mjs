@@ -25,7 +25,7 @@ const STATIC = new Map([
   ['/app.css', ['app.css', 'text/css; charset=utf-8']],
 ]);
 const HEADERS = {
-  'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
@@ -101,12 +101,12 @@ async function main() {
       id: s.id, questionId: s.questionId, title: q.title, category: q.category, roleId: s.roleId, probes: s.probes,
       status: s.status, createdAt: s.createdAt, endedAt: s.endedAt,
       minutes: Math.round((s.endedAt ? (Date.parse(s.endedAt) - Date.parse(s.startedAt)) / 1000 : secondsSince(s.startedAt)) / 60),
-      answers: candidateTurns(s), counted: counted(s), probesUsed: probeState(s.transcript).used,
+      counted: counted(s), probesUsed: probeState(s.transcript).used,
     };
     if (s.status !== 'graded') return out;
     const scores = scoresOf(s.grade);
     return {
-      ...out, scores, summary: s.grade.summary, topGap: s.grade.gaps[0] ?? null,
+      ...out, topGap: s.grade.gaps[0] ?? null,
       weighted: Object.fromEntries(ROLES.map((r) => [r.id, weighted(scores, r)])),
       verdict: Object.fromEntries(ROLES.map((r) => [r.id, verdict(scores, r)])),
     };
@@ -168,7 +168,6 @@ async function main() {
       });
       const raw = structured ?? JSON.parse(text);
       s.grade = strictGrade(raw, candidateText(s.transcript, s.notes));
-      s.gradedAt = iso();
       s.status = 'graded';
     } catch (e) {
       s.status = 'grade_failed';
@@ -229,7 +228,7 @@ async function main() {
         s.endedAt = iso();
       }
       await store.put(s);
-      send('done', { message, status: s.status, probes: probeState(s.transcript) });
+      send('done', { message, status: s.status });
       if (wrapped) void grade(s);
     } catch (e) {
       send('error', { error: e instanceof Error ? e.message : String(e) });
@@ -311,7 +310,7 @@ async function main() {
       const now = iso();
       const s = {
         id: randomUUID(), questionId: q.id, roleId: role.id, probes: Number(b.probes), background, status: 'live',
-        createdAt: now, startedAt: now, endedAt: null, notes: '', grade: null, gradeError: null, gradedAt: null,
+        createdAt: now, startedAt: now, endedAt: null, notes: '', grade: null, gradeError: null,
         transcript: [{ role: 'interviewer', text: opener(q, Number(b.probes)), at: 0, tag: { kind: 'answer' } }],
       };
       await store.put(s);

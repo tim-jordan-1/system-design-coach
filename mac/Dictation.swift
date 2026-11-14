@@ -1,6 +1,6 @@
 // Live dictation for the answer box. Apple's on-device SpeechTranscriber turns speech into text,
 // so no audio leaves the Mac and none is saved. The microphone is on only between start() and stop().
-// process/dictation-engine.md says why this engine and not DictationTranscriber or a custom language model.
+// docs/dictation-engine.md says why this engine and not DictationTranscriber or a custom language model.
 import AVFoundation
 import Speech
 

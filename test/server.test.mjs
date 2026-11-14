@@ -181,7 +181,6 @@ test('a full interview streams, wraps at the probe budget, and grades strictly',
   const first = await turn(created.id, 'I would put a token bucket per API key in Redis, updated atomically with a Lua script.');
   assert.equal(first.deltas, 'How many requests per second do you expect at peak?', 'the tag never reaches the browser');
   assert.deepEqual(first.done.message.tag, { kind: 'probe', dim: 'estimation' });
-  assert.equal(first.done.probes.used, 1);
 
   for (let i = 2; i <= 5; i++) assert.equal((await turn(created.id, `Answer number ${i} with more detail.`)).done.status, 'live');
   const last = await turn(created.id, 'That is my design.');

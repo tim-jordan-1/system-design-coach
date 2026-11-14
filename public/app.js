@@ -221,13 +221,11 @@ function trend(/** @type {{ label: string, value: number, title: string }[]} */ 
     g += `<g><title>${esc(p.title)}</title><circle class="hit" cx="${x(i)}" cy="${y(p.value)}" r="14"/><circle class="dot${last ? ' last' : ''}" cx="${x(i)}" cy="${y(p.value)}" r="${last ? 5.5 : 4}"/></g>`;
     if (i % step === 0 || last) g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(p.label)}</text>`;
   });
-  const lastPt = pts.at(-1);
-  if (lastPt) {
-    // Near the bar, a centred label runs into the "bar" label to the right of the last point.
-    const near = Math.abs(y(lastPt.value) - 12 - (y(barValue) + 4)) < 16;
-    g += `<text class="strong" x="${x(pts.length - 1) - (near ? 10 : 0)}" y="${y(lastPt.value) - 12}" text-anchor="${near ? 'end' : 'middle'}">${f2(lastPt.value)}</text>`;
-  }
-  const desc = `Weighted score over ${pts.length} interviews, latest ${f2(lastPt?.value)}, against a bar of ${f1(barValue)}.`;
+  const lastPt = pts[pts.length - 1];
+  // Near the bar, a centred label runs into the "bar" label to the right of the last point.
+  const near = Math.abs(y(lastPt.value) - 12 - (y(barValue) + 4)) < 16;
+  g += `<text class="strong" x="${x(pts.length - 1) - (near ? 10 : 0)}" y="${y(lastPt.value) - 12}" text-anchor="${near ? 'end' : 'middle'}">${f2(lastPt.value)}</text>`;
+  const desc = `Weighted score over ${pts.length} interviews, latest ${f2(lastPt.value)}, against a bar of ${f1(barValue)}.`;
   return `<svg class="trend" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(desc)}">${g}</svg>`;
 }
 
@@ -267,7 +265,7 @@ function viewOverview() {
     const v = prof.dims[x.id].value;
     const target = r.bars[x.id];
     const tone = v == null ? 'ink' : v < 2 ? 'warn' : 'accent';
-    return `<div class="dimrow"><span class="label" title="${esc(x.label)}">${esc(x.short)}</span>${bar(v, target, tone)}<span class="num right">${f1(v)}</span>${dimStatus(v, target)}</div>`;
+    return `<div class="dimrow"><span class="label" title="${esc(x.label)}">${esc(x.short)}</span>${bar(v, target, tone)}<span class="num">${f1(v)}</span>${dimStatus(v, target)}</div>`;
   }).join('');
   const profPanel = `<section class="panel" aria-labelledby="h-prof"><div class="panel-head"><h2 id="h-prof">Proficiency by dimension</h2><span class="small muted">Recency-weighted, last 5 interviews</span></div>
     <div class="axis-note" aria-hidden="true"><span><i class="l4"></i>L4 bar 2.0</span><span><i class="l5"></i>L5 bar 3.0</span><span><i class="target"></i>${esc(roleShort(r))} bar</span></div>
@@ -373,7 +371,7 @@ function updateRoom() {
     }
     return msgHtml(m, n);
   }).join('');
-  const pending = S.busy ? `<div class="msg pending"><div class="who"><span>Interviewer</span></div><div class="body caret" id="pending-body">${md(S.pending)}</div></div>` : '';
+  const pending = S.busy ? `<div class="msg"><div class="who"><span>Interviewer</span></div><div class="body caret" id="pending-body">${md(S.pending)}</div></div>` : '';
   const err = S.error ? `<p class="error-line" role="alert">${esc(S.error)}</p>` : '';
   const log = $('#log');
   const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
@@ -412,7 +410,6 @@ function tick() {
 
 function viewReport() {
   const s = S.report;
-  if (!s) return '<p class="muted">Loading…</p>';
   const q = s.question;
   const r = role(s.roleId) ?? role(S.target); // a role that the bank no longer has
   const head = `<div class="page-head"><div class="meta"><h1>Design ${esc(q.title)}</h1><p class="small muted">${esc(day(s.createdAt))} · ${esc(roleName(r))} · <span class="num">${s.summary.minutes}</span> min · <span class="num">${s.summary.probesUsed}/${s.probes}</span> probes</p></div><a class="btn" href="#history">All history</a></div>`;

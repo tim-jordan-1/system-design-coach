@@ -2,7 +2,7 @@
 // that the transcriber gets wrong in system design talk, for example "cash" for cache and "page 99" for p99.
 // Each rule matches only a technical phrase, so ordinary speech, and words like "right" and "cash" in their
 // own sense, stay as they are. test/dictation.test.mjs holds sentences that must not change.
-// Measured on spoken answers that the rules never saw, term recall went from 65% to 70%: docs/dictation-engine.md.
+// Measured on spoken answers that the rules never saw, term recall went from 65% to 71%: docs/dictation-engine.md.
 
 const CACHE_NEXT = String.raw`hits?|miss(?:es)?|layers?|keys?|entr(?:y|ies)|invalidation|aside|clusters?|nodes?|servers?|tiers?|warming|stampede|evictions?|ratio|size|lookups?|lines?|polic(?:y|ies)|TTLs?|reads?|writes?|rights|coherence|locality|hierarchy|fill`;
 const CACHE_PREV = String.raw`the|a|our|local|edge|feed|Redis|distributed|in-memory|LRU|CDN|browser|client|write-through|write-back|read-through|L1|L2|hot|warm|cold|shared|timeline|session|query|object|result|near`;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stands in for `claude -p` in tests. With --json-schema it grades; without, it interviews.
-// It obeys "FAKE: <verb>" lines in the stdin prompt: fail (an API error result), hang (wait for SIGTERM),
+// It obeys "FAKE: <verb>" lines in the stdin prompt: fail (an API error result),
 // system (the reply, or the grade's summary, is the system prompt, so a test can read what the server sent),
 // echo (the reply is the stdin prompt), tools (the init line lists a tool that the coach never asks for, then it hangs),
 // stubborn (it ignores SIGTERM, streams one delta to say so, then hangs until SIGKILL).
@@ -28,7 +28,7 @@ if (/FAKE: stubborn/.test(prompt)) {
   process.on('SIGTERM', () => {});
   out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ignoring SIGTERM' } } });
 }
-if (/FAKE: (hang|tools|stubborn)/.test(prompt)) await new Promise(() => setInterval(() => {}, 1000));
+if (/FAKE: (tools|stubborn)/.test(prompt)) await new Promise(() => setInterval(() => {}, 1000));
 const system = /FAKE: system/.test(prompt) ? readFileSync(process.argv[process.argv.indexOf('--system-prompt-file') + 1], 'utf8') : '';
 
 if (process.argv.includes('--json-schema')) {

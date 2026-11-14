@@ -14,7 +14,7 @@ System Design Coach is a local mock system design interview app. A zero-dependen
 
 - The rubric lives in `lib/rubric.mjs`. The questions live in `lib/questions.mjs`.
 - Run the tests after every change.
-- The Mac app bundles `server.mjs`, `lib/*.mjs` and four files of `public/`. A new file in either folder needs a line in `mac/build.sh`. After you change any of them, rebuild the app with `npm run mac`.
+- The Mac app bundles `server.mjs`, `lib/*.mjs` and four files of `public/`. A new file in `public/` needs a line in `mac/build.sh` and an entry in `STATIC` in `server.mjs`. After you change any of them, rebuild the app with `npm run mac`.
 - Read `docs/dictation-engine.md` before you change dictation.
 - Run calibration after a change to the rubric or the grader.
 - Interview data lives outside the repository, in `~/.system-design-coach`. Never write it into the repository.
