@@ -12,7 +12,7 @@ This project is unofficial. It is not affiliated with Anthropic.
 - [Claude Code](https://code.claude.com/docs/en/setup), signed in.
 - For the Mac app: macOS 26 or later and the Xcode Command Line Tools, which give `swiftc`. Xcode includes them.
 
-The browser version runs on macOS. The tests run on Linux in CI. Windows is untested.
+The browser version runs on macOS. The tests run on Linux and macOS in CI. Windows is untested.
 
 ## Install and first run
 
@@ -109,7 +109,7 @@ The grader is Claude with the `opus` model at high effort. After the grader answ
 - Sometimes the interviewer names the technique or the problem before you do. Then that dimension scores 2 at most, which is the L4 bar.
 - Fixed formulas give the verdict and the readiness, not the model. The Rubric page shows the formulas.
 
-The interviewer is Claude with the `sonnet` model at low effort. It gets a budget of probes and a list of the dimensions that it did not test yet. It does not give hints unless you ask for one.
+The interviewer is Claude with the `sonnet` model at low effort. It gets a budget of probes and a list of the dimensions that it did not test yet. It gives a hint only when you are stuck or ask for help, and then only the smallest nudge.
 
 Each call to Claude runs in isolation, in a private folder under `~/.system-design-coach`. It has no tools, no MCP servers, no user settings, no hooks, no CLAUDE.md files, and no saved session history. The server refuses a call if `claude` starts with tools or MCP servers. The server also neutralizes each @-mention in your text, so a prompt cannot pull in a file. Because the calls have no tools, text in your answers or notes cannot make Claude run anything.
 

@@ -34,7 +34,7 @@ func loginShellPath() -> String {
 
 /// The one place that the app may show: the coach server that this app started. The page works only from
 /// the full URL with its token, so the origin (scheme, host, port) is what the rest of the app checks.
-struct ServerOrigin: Equatable {
+struct ServerOrigin {
   let port: Int
 
   /// Finds the coach URL in the server's output. The token stays in the URL, so only the app can load it.
@@ -73,7 +73,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
   var origin: ServerOrigin?
   var launch: URL?
   var logPending = ""
-  var opener: (URL) -> Void = { NSWorkspace.shared.open($0) }
   var quitting = false
   lazy var dictation = Dictation { [weak self] event in
     self?.web.callAsyncJavaScript("window.sdcDictation?.(e)", arguments: ["e": event], in: nil, in: .page, completionHandler: nil)
@@ -127,7 +126,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     output = ""
     logPending = ""
     env["PATH"] = path
-    if env["SDC_PORT"] == nil { env["SDC_PORT"] = "0" }
     env["SDC_STOP_WITH_STDIN"] = "1"
     p.environment = env
     p.standardInput = Pipe()
@@ -186,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // Links to other programs on this Mac (another port on 127.0.0.1, localhost) are dropped, not opened.
     guard let url, ["http", "https"].contains(url.scheme?.lowercased()), let host = url.host?.lowercased() else { return }
     if host == "localhost" || host.hasSuffix(".localhost") || host.hasPrefix("127.") || host == "::1" || host == "0.0.0.0" { return }
-    opener(url)
+    NSWorkspace.shared.open(url)
   }
 
   /// target=_blank and window.open: no new window, the link opens in the browser.
